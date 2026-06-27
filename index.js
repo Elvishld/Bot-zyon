@@ -82,10 +82,13 @@ async function startBot() {
         await new Promise(r => 
           setTimeout(r, 5000))
         const numero = process.env
-          .OWNER_NUMBERO=51976379730.replace(/[^0-9]/g, '')
+          .OWNER_NUMBERO.trim()
+        
+        Consolé.log("Número:", numero) 
+        
         const code = await sock
           .requestPairingCode(numero)
-        console.log(`🔑 CÓDIGO: ${code}`)
+        console.log("Código:", code)
         console.log(`📱 WhatsApp → Dispositivos vinculados → Vincular con número → ${code}`)
       }
     }
