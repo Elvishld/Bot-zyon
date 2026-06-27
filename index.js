@@ -18,28 +18,28 @@ let configurando = false
 let esperandoNombre = false
 let esperandoGenero = false
 let sock
-let codigoActual = null
+let qrActual = null
 let estadoConexion = 'iniciando'
 let dbConectada = false
-let yaConectado = false
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/code') {
+  if (req.url === '/qr') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     res.end(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bot Zyon</title>
-  <meta http-equiv="refresh" content="4">
+  <title>Bot Zyon - QR</title>
+  <meta http-equiv="refresh" content="5">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:Arial,sans-serif;background:#111827;color:white;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
     .box{background:#1f2937;border-radius:20px;padding:36px 28px;text-align:center;max-width:440px;width:100%}
     h1{color:#25D366;margin-bottom:4px;font-size:24px}
     .sub{font-size:13px;color:#6b7280;margin-bottom:20px}
-    .code{font-size:52px;font-weight:900;letter-spacing:10px;color:#25D366;background:#0d1117;padding:24px 16px;border-radius:16px;margin:16px 0;font-family:monospace;border:2px solid #25D366}
+    #qrbox{background:white;border-radius:16px;padding:20px;display:inline-block;margin:12px auto}
     .steps{text-align:left;background:#111827;border-radius:12px;padding:20px;font-size:14px;line-height:2.4;margin-top:12px}
     .step{display:flex;align-items:flex-start;gap:10px;margin-bottom:4px}
     .num{background:#25D366;color:black;border-radius:50%;width:22px;height:22px;min-width:22px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;margin-top:3px}
@@ -51,32 +51,32 @@ const server = http.createServer((req, res) => {
 <body>
 <div class="box">
   <h1>🤖 Bot Zyon</h1>
-  <div class="sub">Estado: <b style="color:${estadoConexion==='conectado'?'#25D366':'#f59e0b'}">${estadoConexion}</b></div>
-  ${estadoConexion === 'conectado'
+  <div class="sub">Estado: <b style="color:\${estadoConexion==='conectado'?'#25D366':'#f59e0b'}">\${estadoConexion}</b></div>
+  \${estadoConexion === 'conectado'
     ? '<div class="conectado">✅ ¡Bot conectado!</div><p style="color:#6b7280">El bot está activo y funcionando.</p>'
-    : codigoActual
-      ? `<div class="code">${codigoActual}</div>
+    : qrActual
+      ? \`<div id="qrbox"></div>
          <div class="steps">
            <div class="step"><div class="num">1</div><div>Abre <b>WhatsApp Business</b></div></div>
            <div class="step"><div class="num">2</div><div><b>Ajustes → Dispositivos vinculados</b></div></div>
            <div class="step"><div class="num">3</div><div>Toca <b>"Vincular un dispositivo"</b></div></div>
-           <div class="step"><div class="num">4</div><div>Toca <b>"Vincular con número de teléfono"</b></div></div>
-           <div class="step"><div class="num">5</div><div>Escribe el código: <b>${codigoActual}</b></div></div>
-         </div>`
-      : '<div class="esperando">⏳ Generando código...<br><small>Recarga en unos segundos</small></div>'
+           <div class="step"><div class="num">4</div><div>Apunta la cámara al QR de arriba</div></div>
+         </div>
+         <script>new QRCode(document.getElementById("qrbox"),{text:\${JSON.stringify(qrActual)},width:260,height:260,correctLevel:QRCode.CorrectLevel.L});<\/script>\`
+      : '<div class="esperando">⏳ Generando QR...<br><small>Recarga en unos segundos</small></div>'
   }
-  <div class="refresh">🔄 Se actualiza cada 4 segundos</div>
+  <div class="refresh">🔄 Se actualiza cada 5 segundos</div>
 </div>
 </body>
 </html>`)
   } else {
     res.writeHead(200)
-    res.end('Bot Zyon activo ✅ | Código: /code')
+    res.end('Bot Zyon activo ✅ | QR en: /qr')
   }
 })
 
 server.listen(process.env.PORT || 3000, () => {
-  console.log('✅ Servidor HTTP activo')
+  console.log('✅ Servidor HTTP activo — QR en /qr')
 })
 
 function limpiarSesion() {
@@ -92,7 +92,7 @@ async function configurarBot() {
     const grupo = await Grupo.findOne({ id: 'config' })
     if (grupo?.configurado) return
     setTimeout(async () => {
-      await sock.sendMessage(OWNER, { text: `👋 Hola! Soy tu nuevo bot!\n\n¿Cómo quieres que me llame?` })
+      await sock.sendMessage(OWNER, { text: '👋 Hola! Soy tu nuevo bot!\n\n¿Cómo quieres que me llame?' })
       esperandoNombre = true
       configurando = true
     }, 3000)
@@ -101,15 +101,13 @@ async function configurarBot() {
 
 async function startBot() {
   estadoConexion = 'iniciando'
-  codigoActual = null
-  yaConectado = false
+  qrActual = null
 
   if (!dbConectada) {
     await connectDB()
     dbConectada = true
   }
 
-  // Siempre limpiar para credenciales frescas
   limpiarSesion()
 
   const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
@@ -119,51 +117,30 @@ async function startBot() {
     version,
     logger: pino({ level: 'silent' }),
     auth: state,
-    printQRInTerminal: false,
+    printQRInTerminal: true,
     browser: Browsers.ubuntu('Chrome')
   })
 
   sock.ev.on('creds.update', saveCreds)
 
-  // Solicitar código inmediatamente
-  estadoConexion = 'generando código'
-  await new Promise(r => setTimeout(r, 2000))
-
-  try {
-    const raw = await sock.requestPairingCode(OWNER_RAW)
-    const clean = (raw || '').replace(/-/g, '')
-    codigoActual = clean.length === 8
-      ? clean.slice(0, 4) + '-' + clean.slice(4)
-      : raw
-    estadoConexion = 'esperando código'
-    console.log('\n==============================')
-    console.log(`🔑 CÓDIGO: ${codigoActual}`)
-    console.log(`🌐 https://bot-zyon.onrender.com/code`)
-    console.log('==============================\n')
-  } catch (err) {
-    console.error('❌ Error código:', err.message)
-    codigoActual = null
-    estadoConexion = 'error - reintentando'
-    setTimeout(startBot, 5000)
-    return
-  }
-
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      qrActual = qr
+      estadoConexion = 'esperando escaneo QR'
+      console.log('📱 QR listo en: https://bot-zyon.onrender.com/qr')
+    }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode
+      qrActual = null
       console.log('🔴 Desconectado, código:', code)
-      codigoActual = null
-
       if (code === DisconnectReason.loggedOut) {
-        console.log('🚪 Sesión cerrada por WhatsApp')
+        limpiarSesion()
       }
-
       estadoConexion = 'reconectando'
       setTimeout(startBot, 4000)
     }
     if (connection === 'open') {
-      yaConectado = true
-      codigoActual = null
+      qrActual = null
       estadoConexion = 'conectado'
       console.log('✅ ¡Zyon conectado!')
       await configurarBot()
