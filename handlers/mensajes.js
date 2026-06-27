@@ -1,50 +1,63 @@
 const { preguntarIA } = require('../ai')
 const { User } = require('../database')
+const { handleComando } = require('./comandos')
+const { handleAntilinks } = require('./antilinks')
 
-const PREFIJOS = ['/','!','?','\\','#','.']
+const PREFIJOS = ['/','>','!','?','\\','#','.']
 
 function tienePrefijo(texto) {
-  return PREFIJOS.some(p => 
-    texto.startsWith(p))
+  return PREFIJOS.some(p => texto.startsWith(p))
 }
 
 function obtenerComando(texto) {
-  return texto.slice(1).split(' ')[0]
-    .toLowerCase()
+  return texto.slice(1).split(' ')[0].toLowerCase()
+}
+
+async function esAdmin(sock, groupId, numero) {
+  try {
+    const meta = await sock.groupMetadata(groupId)
+    return meta.participants.some(p => 
+      p.id === numero && 
+      (p.admin === 'admin' || p.admin === 'superadmin'))
+  } catch {
+    return false
+  }
 }
 
 async function handleMessage(sock, msg) {
   try {
     const from = msg.key.remoteJid
-    const numero = msg.key.participant 
-      || msg.key.remoteJid
+    const numero = msg.key.participant || msg.key.remoteJid
     const isGroup = from.endsWith('@g.us')
-    
-    const texto = msg.message?.conversation 
-      || msg.message?.extendedTextMessage
-        ?.text || ''
-    
+
+    const texto = msg.message?.conversation
+      || msg.message?.extendedTextMessage?.text || ''
+
     if (!texto) return
 
-    const botNombre = process.env.BOT_NAME 
-      || 'Zyon'
+    const botNombre = process.env.BOT_NAME || 'Zyon'
     const mencionaBot = texto.toLowerCase()
       .includes(botNombre.toLowerCase())
 
     let user = await User.findOne({ numero })
     if (!user) {
       user = new User({ numero })
-      await user.save()
     }
-
     user.mensajes += 1
     await user.save()
 
+    const isAdmin = isGroup ? 
+      await esAdmin(sock, from, numero) : true
+
+    if (isGroup) {
+      await handleAntilinks(
+        sock, msg, from, numero, isAdmin)
+    }
+
     if (tienePrefijo(texto)) {
       const cmd = obtenerComando(texto)
-      await manejarComando(
-        sock, from, cmd, texto, 
-        msg, numero, user)
+      await handleComando(
+        sock, from, cmd, texto, msg, numero, isAdmin)
       return
     }
 
@@ -58,20 +71,18 @@ async function handleMessage(sock, msg) {
       )
 
       user.historial.push({
-        rol: 'usuario', texto, 
-        fecha: new Date()
+        rol: 'usuario', texto, fecha: new Date()
       })
       user.historial.push({
-        rol: 'bot', texto: respuesta,
-        fecha: new Date()
+        rol: 'bot', texto: respuesta, fecha: new Date()
       })
+
       if (user.historial.length > 50) {
-        user.historial = 
-          user.historial.slice(-50)
+        user.historial = user.historial.slice(-50)
       }
       await user.save()
 
-      await sock.sendMessage(from, { 
+      await sock.sendMessage(from, {
         text: respuesta,
         quoted: msg
       })
@@ -81,42 +92,4 @@ async function handleMessage(sock, msg) {
   }
 }
 
-async function manejarComando(
-  sock, from, cmd, texto, msg, numero, user) {
-  
-  switch(cmd) {
-    case 'menu':
-    case 'help':
-    case 'ayuda':
-    case 'comandos':
-      await sock.sendMessage(from, { 
-        text: obtenerMenu() 
-      })
-      break
-    default:
-      break
-  }
-}
-
-function obtenerMenu() {
-  return `
-╔══════════════════════╗
-✦  ZYON  ✦
-╚══════════════════════╝
-
-━━━━ 📋 MENU ━━━━
-▸ .menu / .help / .ayuda
-
-━━━━ 🤖 IA ━━━━
-▸ Zyon + mensaje
-
-━━━━ ⬇️ DESCARGAS ━━━━
-▸ .yt / .youtube [link/nombre]
-▸ .ytm / .ytmusic [link/nombre]
-▸ .fb / .facebook [link]
-▸ .tt / .tiktok [link]
-▸ .ig / .instagram [link]
-
-━━━━ 🎧 MUSICA ━━━━
-▸ .shazam [audio/video]
-▸ .musica / .soundfi
+module.exports = { handleMessage }
