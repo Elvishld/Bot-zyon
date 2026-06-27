@@ -18,7 +18,7 @@ server.listen(process.env.PORT || 3000, () => {
   console.log('✅ Servidor HTTP activo')
 })
 
-const OWNER = process.env.OWNER_NUMBER 
+const OWNER = OWNER_NUMBER=51976379730 
   + '@s.whatsapp.net'
 
 let configurando = false
@@ -82,7 +82,7 @@ async function startBot() {
         await new Promise(r => 
           setTimeout(r, 5000))
         const numero = process.env
-          .OWNER_NUMBER.replace(/[^0-9]/g, '')
+          .OWNER_NUMBERO=51976379730.replace(/[^0-9]/g, '')
         const code = await sock
           .requestPairingCode(numero)
         console.log(`🔑 CÓDIGO: ${code}`)
