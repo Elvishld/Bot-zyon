@@ -18,8 +18,7 @@ server.listen(process.env.PORT || 3000, () => {
   console.log('✅ Servidor HTTP activo')
 })
 
-const OWNER = OWNER_NUMBER=51976379730 
-  + '@s.whatsapp.net'
+const OWNER = (process.env.OWNER_NUMBER || '').replace('@s.whatsapp.net', '').trim() + '@s.whatsapp.net'
 
 let configurando = false
 let esperandoNombre = false
@@ -81,14 +80,13 @@ async function startBot() {
         pairingCodeSolicitado = true
         await new Promise(r => 
           setTimeout(r, 5000))
-        const numero = process.env
-          .OWNER_NUMBERO.trim()
+        const numero = (process.env.OWNER_NUMBER || '').replace('@s.whatsapp.net', '').trim()
         
-        Consolé.log("Número:", numero) 
+        console.log("Número:", numero)
         
         const code = await sock
           .requestPairingCode(numero)
-        console.log("Código:", code)
+        console.log("Código de emparejamiento:", code)
         console.log(`📱 WhatsApp → Dispositivos vinculados → Vincular con número → ${code}`)
       }
     }
