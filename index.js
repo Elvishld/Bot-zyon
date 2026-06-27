@@ -22,53 +22,57 @@ let qrActual = null
 let estadoConexion = 'iniciando'
 let dbConectada = false
 
+function buildHTML() {
+  const color = estadoConexion === 'conectado' ? '#25D366' : '#f59e0b'
+  let contenido = ''
+  if (estadoConexion === 'conectado') {
+    contenido = '<div class="conectado">✅ ¡Bot conectado!</div><p style="color:#6b7280">El bot está activo y funcionando.</p>'
+  } else if (qrActual) {
+    const qrJson = JSON.stringify(qrActual)
+    contenido = '<div id="qrbox"></div>'
+    contenido += '<div class="steps">'
+    contenido += '<div class="step"><div class="num">1</div><div>Abre <b>WhatsApp Business</b></div></div>'
+    contenido += '<div class="step"><div class="num">2</div><div><b>Ajustes → Dispositivos vinculados</b></div></div>'
+    contenido += '<div class="step"><div class="num">3</div><div>Toca <b>"Vincular un dispositivo"</b></div></div>'
+    contenido += '<div class="step"><div class="num">4</div><div>Apunta la cámara al QR de arriba</div></div>'
+    contenido += '</div>'
+    contenido += '<script>new QRCode(document.getElementById("qrbox"),{text:' + qrJson + ',width:260,height:260,correctLevel:QRCode.CorrectLevel.L});<\/script>'
+  } else {
+    contenido = '<div class="esperando">⏳ Generando QR...<br><small>Recarga en unos segundos</small></div>'
+  }
+
+  return '<!DOCTYPE html><html><head>'
+    + '<meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    + '<title>Bot Zyon - QR</title>'
+    + '<meta http-equiv="refresh" content="5">'
+    + '<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>'
+    + '<style>'
+    + '*{box-sizing:border-box;margin:0;padding:0}'
+    + 'body{font-family:Arial,sans-serif;background:#111827;color:white;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}'
+    + '.box{background:#1f2937;border-radius:20px;padding:36px 28px;text-align:center;max-width:440px;width:100%}'
+    + 'h1{color:#25D366;margin-bottom:4px;font-size:24px}'
+    + '.sub{font-size:13px;color:#6b7280;margin-bottom:20px}'
+    + '#qrbox{background:white;border-radius:16px;padding:20px;display:inline-block;margin:12px auto}'
+    + '.steps{text-align:left;background:#111827;border-radius:12px;padding:20px;font-size:14px;line-height:2.4;margin-top:12px}'
+    + '.step{display:flex;align-items:flex-start;gap:10px;margin-bottom:4px}'
+    + '.num{background:#25D366;color:black;border-radius:50%;width:22px;height:22px;min-width:22px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;margin-top:3px}'
+    + '.conectado{color:#25D366;font-size:24px;margin:20px 0}'
+    + '.esperando{color:#9ca3af;margin:20px 0;font-size:15px}'
+    + '.refresh{margin-top:16px;font-size:11px;color:#374151}'
+    + '</style></head><body>'
+    + '<div class="box">'
+    + '<h1>🤖 Bot Zyon</h1>'
+    + '<div class="sub">Estado: <b style="color:' + color + '">' + estadoConexion + '</b></div>'
+    + contenido
+    + '<div class="refresh">🔄 Se actualiza cada 5 segundos</div>'
+    + '</div></body></html>'
+}
+
 const server = http.createServer((req, res) => {
   if (req.url === '/qr') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bot Zyon - QR</title>
-  <meta http-equiv="refresh" content="5">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Arial,sans-serif;background:#111827;color:white;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
-    .box{background:#1f2937;border-radius:20px;padding:36px 28px;text-align:center;max-width:440px;width:100%}
-    h1{color:#25D366;margin-bottom:4px;font-size:24px}
-    .sub{font-size:13px;color:#6b7280;margin-bottom:20px}
-    #qrbox{background:white;border-radius:16px;padding:20px;display:inline-block;margin:12px auto}
-    .steps{text-align:left;background:#111827;border-radius:12px;padding:20px;font-size:14px;line-height:2.4;margin-top:12px}
-    .step{display:flex;align-items:flex-start;gap:10px;margin-bottom:4px}
-    .num{background:#25D366;color:black;border-radius:50%;width:22px;height:22px;min-width:22px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;margin-top:3px}
-    .conectado{color:#25D366;font-size:24px;margin:20px 0}
-    .esperando{color:#9ca3af;margin:20px 0;font-size:15px}
-    .refresh{margin-top:16px;font-size:11px;color:#374151}
-  </style>
-</head>
-<body>
-<div class="box">
-  <h1>🤖 Bot Zyon</h1>
-  <div class="sub">Estado: <b style="color:\${estadoConexion==='conectado'?'#25D366':'#f59e0b'}">\${estadoConexion}</b></div>
-  \${estadoConexion === 'conectado'
-    ? '<div class="conectado">✅ ¡Bot conectado!</div><p style="color:#6b7280">El bot está activo y funcionando.</p>'
-    : qrActual
-      ? \`<div id="qrbox"></div>
-         <div class="steps">
-           <div class="step"><div class="num">1</div><div>Abre <b>WhatsApp Business</b></div></div>
-           <div class="step"><div class="num">2</div><div><b>Ajustes → Dispositivos vinculados</b></div></div>
-           <div class="step"><div class="num">3</div><div>Toca <b>"Vincular un dispositivo"</b></div></div>
-           <div class="step"><div class="num">4</div><div>Apunta la cámara al QR de arriba</div></div>
-         </div>
-         <script>new QRCode(document.getElementById("qrbox"),{text:\${JSON.stringify(qrActual)},width:260,height:260,correctLevel:QRCode.CorrectLevel.L});<\/script>\`
-      : '<div class="esperando">⏳ Generando QR...<br><small>Recarga en unos segundos</small></div>'
-  }
-  <div class="refresh">🔄 Se actualiza cada 5 segundos</div>
-</div>
-</body>
-</html>`)
+    res.end(buildHTML())
   } else {
     res.writeHead(200)
     res.end('Bot Zyon activo ✅ | QR en: /qr')
@@ -159,7 +163,7 @@ async function startBot() {
         const nombre = texto.trim()
         esperandoNombre = false
         esperandoGenero = true
-        await sock.sendMessage(OWNER, { text: `✅ Me llamaré *${nombre}*\n\n¿Qué género prefieres?\n1️⃣ Masculino\n2️⃣ Femenino` })
+        await sock.sendMessage(OWNER, { text: '✅ Me llamaré *' + nombre + '*\n\n¿Qué género prefieres?\n1️⃣ Masculino\n2️⃣ Femenino' })
         let config = await Grupo.findOne({ id: 'config' })
         if (!config) config = new Grupo({ id: 'config' })
         config.botNombre = nombre
@@ -177,7 +181,7 @@ async function startBot() {
         configurando = false
         process.env.BOT_NAME = config.botNombre
         process.env.BOT_GENDER = genero
-        await sock.sendMessage(OWNER, { text: `🎉 Todo listo!\n\n🤖 Nombre: *${config.botNombre}*\n👤 Género: *${genero}*\n\n¡Agrégame al grupo! 🚀` })
+        await sock.sendMessage(OWNER, { text: '🎉 Todo listo!\n\n🤖 Nombre: *' + config.botNombre + '*\n👤 Género: *' + genero + '*\n\n¡Agrégame al grupo! 🚀' })
         return
       }
     }
