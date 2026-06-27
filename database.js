@@ -3,10 +3,7 @@ const mongoose = require('mongoose')
 const userSchema = new mongoose.Schema({
   numero: String,
   nombre: String,
-  estado: { 
-    type: String, 
-    default: 'neutral' 
-  },
+  estado: { type: String, default: 'neutral' },
   historial: { type: Array, default: [] },
   enamoradoDe: { type: String, default: null },
   advertencias: { type: Number, default: 0 },
@@ -24,8 +21,14 @@ const grupoSchema = new mongoose.Schema({
   antilinks: { type: Boolean, default: true }
 })
 
+const sessionSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  value: { type: String }
+})
+
 const User = mongoose.model('User', userSchema)
 const Grupo = mongoose.model('Grupo', grupoSchema)
+const Session = mongoose.model('Session', sessionSchema)
 
 async function connectDB() {
   try {
@@ -37,4 +40,4 @@ async function connectDB() {
   }
 }
 
-module.exports = { connectDB, User, Grupo }
+module.exports = { connectDB, User, Grupo, Session }
