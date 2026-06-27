@@ -4,9 +4,19 @@ const { default: makeWASocket,
   fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys')
 const pino = require('pino')
+const http = require('http')
 const { connectDB, Grupo } = require('./database')
 const { handleMessage } = require('./handlers/mensajes')
 const { handleBienvenida } = require('./handlers/bienvenida')
+
+// Servidor HTTP para Render
+const server = http.createServer((req, res) => {
+  res.writeHead(200)
+  res.end('Bot Zyon activo ✅')
+})
+server.listen(process.env.PORT || 3000, () => {
+  console.log('✅ Servidor HTTP activo')
+})
 
 const OWNER = process.env.OWNER_NUMBER 
   + '@s.whatsapp.net'
@@ -15,6 +25,7 @@ let configurando = false
 let esperandoNombre = false
 let esperandoGenero = false
 let sock
+let pairingCodeSolicitado = false
 
 async function configurarBot() {
   const grupo = await Grupo.findOne({ 
@@ -55,25 +66,30 @@ async function startBot() {
       const code = lastDisconnect?.error
         ?.output?.statusCode
       if (code !== DisconnectReason.loggedOut) {
+        pairingCodeSolicitado = false
         startBot()
       }
     }
-
     if (connection === 'open') {
       console.log('✅ Zyon conectado!')
+      pairingCodeSolicitado = false
       await configurarBot()
     }
+    if (connection === 'connecting') {
+      if (!sock.authState.creds.registered 
+        && !pairingCodeSolicitado) {
+        pairingCodeSolicitado = true
+        await new Promise(r => 
+          setTimeout(r, 5000))
+        const numero = process.env
+          .OWNER_NUMBER.replace(/[^0-9]/g, '')
+        const code = await sock
+          .requestPairingCode(numero)
+        console.log(`🔑 CÓDIGO: ${code}`)
+        console.log(`📱 WhatsApp → Dispositivos vinculados → Vincular con número → ${code}`)
+      }
+    }
   })
-
-  if (!sock.authState.creds.registered) {
-    await new Promise(r => setTimeout(r, 3000))
-    const numero = process.env.OWNER_NUMBER
-      .replace(/[^0-9]/g, '')
-    const code = await sock
-      .requestPairingCode(numero)
-    console.log(`🔑 TU CÓDIGO DE VINCULACIÓN: ${code}`)
-    console.log(`📱 WhatsApp → Dispositivos vinculados → Vincular con número → Ingresa: ${code}`)
-  }
   
   sock.ev.on('messages.upsert', 
     async ({ messages }) => {
@@ -93,7 +109,7 @@ async function startBot() {
         esperandoGenero = true
 
         await sock.sendMessage(OWNER, {
-          text: `✅ Perfecto! Me llamaré *${nombre}*\n\n¿Qué género prefieres?\n1️⃣ Masculino\n2️⃣ Femenino`
+          text: `✅ Me llamaré *${nombre}*\n\n¿Qué género prefieres?\n1️⃣ Masculino\n2️⃣ Femenino`
         })
 
         let config = await Grupo.findOne({ 
@@ -130,7 +146,7 @@ async function startBot() {
         process.env.BOT_GENDER = genero
 
         await sock.sendMessage(OWNER, {
-          text: `🎉 Todo listo!\n\n🤖 Nombre: *${config.botNombre}*\n👤 Género: *${genero}*\n\n¡Agrégame al grupo cuando quieras! 🚀`
+          text: `🎉 Todo listo!\n\n🤖 Nombre: *${config.botNombre}*\n👤 Género: *${genero}*\n\n¡Agrégame al grupo! 🚀`
         })
         return
       }
