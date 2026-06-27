@@ -18,7 +18,7 @@ server.listen(process.env.PORT || 3000, () => {
   console.log('✅ Servidor HTTP activo')
 })
 
-const OWNER = (process.env.OWNER_NUMBER || '').replace('@s.whatsapp.net', '').trim() + '@s.whatsapp.net'
+const OWNER = (process.env.OWNER_NUMBER || '').replace('@s.whatsapp.net', '').replace(/\D/g, '').trim() + '@s.whatsapp.net'
 
 let configurando = false
 let esperandoNombre = false
@@ -27,9 +27,7 @@ let sock
 let pairingCodeSolicitado = false
 
 async function configurarBot() {
-  const grupo = await Grupo.findOne({ 
-    id: 'config' 
-  })
+  const grupo = await Grupo.findOne({ id: 'config' })
   if (grupo?.configurado) return
 
   setTimeout(async () => {
@@ -44,10 +42,8 @@ async function configurarBot() {
 async function startBot() {
   await connectDB()
   
-  const { state, saveCreds } = 
-    await useMultiFileAuthState('./auth_info')
-  const { version } = 
-    await fetchLatestBaileysVersion()
+  const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
+  const { version } = await fetchLatestBaileysVersion()
   
   sock = makeWASocket({
     version,
@@ -58,94 +54,81 @@ async function startBot() {
   })
   
   sock.ev.on('creds.update', saveCreds)
+
+  // Solicitar código INMEDIATAMENTE si no está registrado
+  if (!sock.authState.creds.registered && !pairingCodeSolicitado) {
+    pairingCodeSolicitado = true
+    await new Promise(r => setTimeout(r, 3000))
+    const numero = (process.env.OWNER_NUMBER || '').replace('@s.whatsapp.net', '').replace(/\D/g, '').trim()
+    console.log('📞 Número para vincular:', numero)
+    try {
+      const code = await sock.requestPairingCode(numero)
+      const codeFmt = code?.match(/.{1,4}/g)?.join('-') || code
+      console.log('\n=============================')
+      console.log(`🔑 CÓDIGO: ${codeFmt}`)
+      console.log('=============================')
+      console.log('📱 WhatsApp → Ajustes → Dispositivos vinculados → Vincular con número de teléfono')
+      console.log(`👆 Ingresa: ${codeFmt}\n`)
+    } catch (err) {
+      console.error('❌ Error al solicitar código:', err.message)
+      pairingCodeSolicitado = false
+    }
+  }
   
-  sock.ev.on('connection.update', 
-    async ({ connection, lastDisconnect }) => {
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
-      const code = lastDisconnect?.error
-        ?.output?.statusCode
+      const code = lastDisconnect?.error?.output?.statusCode
       if (code !== DisconnectReason.loggedOut) {
         pairingCodeSolicitado = false
         startBot()
+      } else {
+        console.log('🔴 Sesión cerrada. Elimina la carpeta auth_info y reinicia.')
       }
     }
     if (connection === 'open') {
-      console.log('✅ Zyon conectado!')
+      console.log('✅ Zyon conectado a WhatsApp!')
       pairingCodeSolicitado = false
       await configurarBot()
     }
-    if (connection === 'connecting') {
-      if (!sock.authState.creds.registered 
-        && !pairingCodeSolicitado) {
-        pairingCodeSolicitado = true
-        await new Promise(r => 
-          setTimeout(r, 5000))
-        const numero = (process.env.OWNER_NUMBER || '').replace('@s.whatsapp.net', '').trim()
-        
-        console.log("Número:", numero)
-        
-        const code = await sock
-          .requestPairingCode(numero)
-        console.log("Código de emparejamiento:", code)
-        console.log(`📱 WhatsApp → Dispositivos vinculados → Vincular con número → ${code}`)
-      }
-    }
   })
   
-  sock.ev.on('messages.upsert', 
-    async ({ messages }) => {
+  sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0]
     if (!msg.message) return
     if (msg.key.fromMe) return
 
     const from = msg.key.remoteJid
     const texto = msg.message?.conversation 
-      || msg.message?.extendedTextMessage
-        ?.text || ''
+      || msg.message?.extendedTextMessage?.text || ''
 
     if (configurando && from === OWNER) {
       if (esperandoNombre) {
         const nombre = texto.trim()
         esperandoNombre = false
         esperandoGenero = true
-
         await sock.sendMessage(OWNER, {
           text: `✅ Me llamaré *${nombre}*\n\n¿Qué género prefieres?\n1️⃣ Masculino\n2️⃣ Femenino`
         })
-
-        let config = await Grupo.findOne({ 
-          id: 'config' 
-        })
-        if (!config) {
-          config = new Grupo({ id: 'config' })
-        }
+        let config = await Grupo.findOne({ id: 'config' })
+        if (!config) config = new Grupo({ id: 'config' })
         config.botNombre = nombre
         await config.save()
         return
       }
 
       if (esperandoGenero) {
-        const config = await Grupo.findOne({ 
-          id: 'config' 
-        })
-        
+        const config = await Grupo.findOne({ id: 'config' })
         let genero = 'masculino'
-        if (texto === '2' || 
-          texto.toLowerCase()
-            .includes('femen')) {
+        if (texto === '2' || texto.toLowerCase().includes('femen')) {
           genero = 'femenino'
         }
-
         config.botGenero = genero
         config.configurado = true
         await config.save()
-
         esperandoGenero = false
         configurando = false
-
         process.env.BOT_NAME = config.botNombre
         process.env.BOT_GENDER = genero
-
         await sock.sendMessage(OWNER, {
           text: `🎉 Todo listo!\n\n🤖 Nombre: *${config.botNombre}*\n👤 Género: *${genero}*\n\n¡Agrégame al grupo! 🚀`
         })
@@ -156,10 +139,8 @@ async function startBot() {
     await handleMessage(sock, msg)
   })
   
-  sock.ev.on('group-participants.update', 
-    async ({ id, participants, action }) => {
-    await handleBienvenida(
-      sock, id, participants, action)
+  sock.ev.on('group-participants.update', async ({ id, participants, action }) => {
+    await handleBienvenida(sock, id, participants, action)
   })
 }
 
