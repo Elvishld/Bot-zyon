@@ -2,14 +2,12 @@ const { default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  Browsers,
-  initAuthCreds
+  Browsers
 } = require('@whiskeysockets/baileys')
 const pino = require('pino')
 const http = require('http')
 const fs = require('fs')
-const qrcode = require('qrcode-terminal')
-const { connectDB, Grupo, Session } = require('./database')
+const { connectDB, Grupo } = require('./database')
 const { handleMessage } = require('./handlers/mensajes')
 const { handleBienvenida } = require('./handlers/bienvenida')
 
@@ -20,155 +18,107 @@ let configurando = false
 let esperandoNombre = false
 let esperandoGenero = false
 let sock
-let qrActual = null
+let codigoActual = null
 let estadoConexion = 'iniciando'
+let dbConectada = false
 
-// ── Sesión en MongoDB ──────────────────────────────
-function serializarBuffer(data) {
-  return JSON.stringify(data, (_, value) => {
-    if (Buffer.isBuffer(value)) return { _buf: true, data: value.toString('base64') }
-    return value
-  })
-}
-
-function deserializarBuffer(str) {
-  return JSON.parse(str, (_, value) => {
-    if (value && value._buf) return Buffer.from(value.data, 'base64')
-    return value
-  })
-}
-
-async function escribirSesion(id, data) {
-  await Session.findOneAndUpdate(
-    { id },
-    { value: serializarBuffer(data) },
-    { upsert: true }
-  )
-}
-
-async function leerSesion(id) {
-  try {
-    const doc = await Session.findOne({ id })
-    if (!doc?.value) return null
-    return deserializarBuffer(doc.value)
-  } catch { return null }
-}
-
-async function borrarSesion(id) {
-  await Session.deleteOne({ id })
-}
-
-async function useMongoAuthState() {
-  const creds = (await leerSesion('creds')) || initAuthCreds()
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const result = {}
-          await Promise.all(ids.map(async (id) => {
-            result[id] = await leerSesion(`${type}--${id}`)
-          }))
-          return result
-        },
-        set: async (data) => {
-          const tareas = []
-          for (const tipo in data) {
-            for (const id in data[tipo]) {
-              const valor = data[tipo][id]
-              tareas.push(valor
-                ? escribirSesion(`${tipo}--${id}`, valor)
-                : borrarSesion(`${tipo}--${id}`)
-              )
-            }
-          }
-          await Promise.all(tareas)
-        }
-      }
-    },
-    saveCreds: () => escribirSesion('creds', creds)
-  }
-}
-// ──────────────────────────────────────────────────
-
-// Servidor HTTP
 const server = http.createServer((req, res) => {
-  if (req.url === '/qr' || req.url === '/code') {
+  if (req.url === '/code' || req.url === '/codigo') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     res.end(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bot Zyon - QR</title>
-  <meta http-equiv="refresh" content="8">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <title>Bot Zyon - Código</title>
+  <meta http-equiv="refresh" content="5">
   <style>
-    body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .box { background: #16213e; border-radius: 16px; padding: 40px 30px; text-align: center; max-width: 420px; width: 95%; }
-    h1 { color: #25D366; margin-bottom: 6px; }
-    .estado { font-size: 13px; color: #aaa; margin-bottom: 20px; }
-    #qrbox { background: white; border-radius: 12px; padding: 16px; display: inline-block; margin: 16px auto; }
-    .instruccion { font-size: 13px; color: #ccc; line-height: 1.8; margin-top: 16px; }
-    .conectado { color: #25D366; font-size: 24px; margin: 20px 0; }
-    .esperando { color: #aaa; font-size: 15px; margin: 20px 0; }
-    .refresh { margin-top: 16px; font-size: 11px; color: #555; }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#1a1a2e;color:white;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .box{background:#16213e;border-radius:16px;padding:40px 30px;text-align:center;max-width:440px;width:95%}
+    h1{color:#25D366;margin-bottom:6px;font-size:26px}
+    .estado{font-size:13px;color:#aaa;margin-bottom:24px}
+    .code{font-size:48px;font-weight:bold;letter-spacing:10px;color:#25D366;background:#0a1628;padding:22px 28px;border-radius:14px;margin:20px 0;font-family:monospace;border:2px solid #25D366}
+    .instruccion{font-size:14px;color:#ccc;line-height:2;margin-top:16px}
+    .instruccion b{color:white}
+    .conectado{color:#25D366;font-size:26px;margin:20px 0}
+    .esperando{color:#aaa;font-size:15px;margin:20px 0;padding:20px}
+    .refresh{margin-top:20px;font-size:11px;color:#444}
+    .numero{font-size:12px;color:#555;margin-top:8px}
   </style>
 </head>
 <body>
 <div class="box">
   <h1>🤖 Bot Zyon</h1>
-  <div class="estado">Estado: <b>${estadoConexion}</b></div>
+  <div class="estado">Estado: <b style="color:${estadoConexion === 'conectado' ? '#25D366' : '#f0a500'}">${estadoConexion}</b></div>
   ${estadoConexion === 'conectado'
-    ? '<div class="conectado">✅ ¡Bot conectado!</div><p style="color:#aaa">Sesión guardada en MongoDB 🔒</p>'
-    : qrActual
-      ? `<div id="qrbox"></div>
+    ? '<div class="conectado">✅ ¡Bot conectado a WhatsApp!</div><p style="color:#aaa;font-size:14px">El bot está activo y funcionando.</p>'
+    : codigoActual
+      ? `<div class="code">${codigoActual}</div>
          <div class="instruccion">
            📱 Abre <b>WhatsApp Business</b><br>
-           → Ajustes → Dispositivos vinculados<br>
-           → Vincular un dispositivo<br>
-           → Escanea este código QR
+           → <b>Ajustes</b> (⚙️)<br>
+           → <b>Dispositivos vinculados</b><br>
+           → <b>Vincular un dispositivo</b><br>
+           → <b>Vincular con número de teléfono</b><br>
+           → Ingresa el código de arriba<br><br>
+           ⏱️ <b>El código expira en ~60 segundos</b><br>
+           (la página genera uno nuevo automáticamente)
          </div>
-         <script>
-           new QRCode(document.getElementById("qrbox"), {
-             text: ${JSON.stringify(qrActual)},
-             width: 220, height: 220
-           });
-         </script>`
-      : '<div class="esperando">⏳ Generando QR, espera unos segundos...</div>'
+         <div class="numero">Número: +${OWNER_RAW}</div>`
+      : '<div class="esperando">⏳ Generando código de vinculación...<br><small>Espera unos segundos</small></div>'
   }
-  <div class="refresh">Página se actualiza cada 8 segundos</div>
+  <div class="refresh">Esta página se actualiza cada 5 segundos</div>
 </div>
 </body>
 </html>`)
   } else {
     res.writeHead(200)
-    res.end('Bot Zyon activo ✅')
+    res.end('Bot Zyon activo ✅ | Código de vinculación: /code')
   }
 })
 
 server.listen(process.env.PORT || 3000, () => {
   console.log('✅ Servidor HTTP activo')
+  console.log(`🌐 Código en: https://bot-zyon.onrender.com/code`)
 })
 
+function limpiarSesion() {
+  try {
+    if (fs.existsSync('./auth_info')) {
+      fs.rmSync('./auth_info', { recursive: true, force: true })
+      console.log('🗑️ Sesión eliminada')
+    }
+  } catch (e) {}
+}
+
 async function configurarBot() {
-  const grupo = await Grupo.findOne({ id: 'config' })
-  if (grupo?.configurado) return
-  setTimeout(async () => {
-    await sock.sendMessage(OWNER, {
-      text: `👋 Hola! Soy tu nuevo bot!\n\n¿Cómo quieres que me llame?`
-    })
-    esperandoNombre = true
-    configurando = true
-  }, 3000)
+  try {
+    const grupo = await Grupo.findOne({ id: 'config' })
+    if (grupo?.configurado) return
+    setTimeout(async () => {
+      await sock.sendMessage(OWNER, {
+        text: `👋 Hola! Soy tu nuevo bot!\n\n¿Cómo quieres que me llame?`
+      })
+      esperandoNombre = true
+      configurando = true
+    }, 3000)
+  } catch (e) {}
 }
 
 async function startBot() {
   estadoConexion = 'iniciando'
-  qrActual = null
-  await connectDB()
+  codigoActual = null
 
-  const { state, saveCreds } = await useMongoAuthState()
+  if (!dbConectada) {
+    await connectDB()
+    dbConectada = true
+  }
+
+  // Limpiar sesión anterior para garantizar código fresco
+  limpiarSesion()
+
+  const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
   const { version } = await fetchLatestBaileysVersion()
 
   sock = makeWASocket({
@@ -181,28 +131,44 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      qrActual = qr
-      estadoConexion = 'esperando escaneo QR'
-      console.log('\n📱 ESCANEA EL QR EN: https://bot-zyon.onrender.com/qr')
-      qrcode.generate(qr, { small: true })
-    }
+  // Pedir código de vinculación inmediatamente
+  estadoConexion = 'generando código'
+  await new Promise(r => setTimeout(r, 4000))
+
+  try {
+    const code = await sock.requestPairingCode(OWNER_RAW)
+    codigoActual = code?.replace(/(.{4})(?=.)/g, '$1-') || code
+    estadoConexion = 'esperando código'
+    console.log('\n================================')
+    console.log(`🔑 CÓDIGO: ${codigoActual}`)
+    console.log('================================')
+    console.log(`🌐 También en: https://bot-zyon.onrender.com/code\n`)
+  } catch (err) {
+    console.error('❌ Error al generar código:', err.message)
+    codigoActual = null
+    estadoConexion = 'error - reiniciando'
+    setTimeout(startBot, 5000)
+    return
+  }
+
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode
-      estadoConexion = 'reconectando'
-      qrActual = null
       console.log('🔴 Desconectado, código:', statusCode)
+      codigoActual = null
+
       if (statusCode === DisconnectReason.loggedOut) {
-        console.log('🚪 Sesión cerrada. Limpiando sesión en MongoDB...')
-        await Session.deleteMany({})
+        console.log('🚪 Sesión cerrada. Reiniciando...')
       }
-      setTimeout(startBot, 3000)
+
+      estadoConexion = 'reconectando'
+      setTimeout(startBot, 4000)
     }
+
     if (connection === 'open') {
       estadoConexion = 'conectado'
-      qrActual = null
-      console.log('✅ ¡Zyon conectado! Sesión guardada en MongoDB 🔒')
+      codigoActual = null
+      console.log('✅ ¡Zyon conectado a WhatsApp Business!')
       await configurarBot()
     }
   })
