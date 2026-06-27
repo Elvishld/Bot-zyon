@@ -43,7 +43,7 @@ async function startBot() {
     version,
     logger: pino({ level: 'silent' }),
     auth: state,
-    printQRInTerminal: true,
+    printQRInTerminal: false,
     browser: ['Zyon', 'Chrome', '1.0.0']
   })
   
@@ -58,11 +58,22 @@ async function startBot() {
         startBot()
       }
     }
+
     if (connection === 'open') {
       console.log('✅ Zyon conectado!')
       await configurarBot()
     }
   })
+
+  if (!sock.authState.creds.registered) {
+    await new Promise(r => setTimeout(r, 3000))
+    const numero = process.env.OWNER_NUMBER
+      .replace(/[^0-9]/g, '')
+    const code = await sock
+      .requestPairingCode(numero)
+    console.log(`🔑 TU CÓDIGO DE VINCULACIÓN: ${code}`)
+    console.log(`📱 WhatsApp → Dispositivos vinculados → Vincular con número → Ingresa: ${code}`)
+  }
   
   sock.ev.on('messages.upsert', 
     async ({ messages }) => {
@@ -103,7 +114,8 @@ async function startBot() {
         
         let genero = 'masculino'
         if (texto === '2' || 
-          texto.toLowerCase().includes('femen')) {
+          texto.toLowerCase()
+            .includes('femen')) {
           genero = 'femenino'
         }
 
@@ -113,6 +125,9 @@ async function startBot() {
 
         esperandoGenero = false
         configurando = false
+
+        process.env.BOT_NAME = config.botNombre
+        process.env.BOT_GENDER = genero
 
         await sock.sendMessage(OWNER, {
           text: `🎉 Todo listo!\n\n🤖 Nombre: *${config.botNombre}*\n👤 Género: *${genero}*\n\n¡Agrégame al grupo cuando quieras! 🚀`
