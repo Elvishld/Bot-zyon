@@ -1,13 +1,15 @@
-const { default: makeWASocket, 
-  useMultiFileAuthState, 
+const { default: makeWASocket,
+  useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  Browsers
+  Browsers,
+  initAuthCreds
 } = require('@whiskeysockets/baileys')
 const pino = require('pino')
 const http = require('http')
 const fs = require('fs')
-const { connectDB, Grupo } = require('./database')
+const qrcode = require('qrcode-terminal')
+const { connectDB, Grupo, Session } = require('./database')
 const { handleMessage } = require('./handlers/mensajes')
 const { handleBienvenida } = require('./handlers/bienvenida')
 
@@ -18,75 +20,136 @@ let configurando = false
 let esperandoNombre = false
 let esperandoGenero = false
 let sock
-let pairingCodeSolicitado = false
-let codigoActual = null
+let qrActual = null
 let estadoConexion = 'iniciando'
 
-// Servidor HTTP con página para ver el código
+// ── Sesión en MongoDB ──────────────────────────────
+function serializarBuffer(data) {
+  return JSON.stringify(data, (_, value) => {
+    if (Buffer.isBuffer(value)) return { _buf: true, data: value.toString('base64') }
+    return value
+  })
+}
+
+function deserializarBuffer(str) {
+  return JSON.parse(str, (_, value) => {
+    if (value && value._buf) return Buffer.from(value.data, 'base64')
+    return value
+  })
+}
+
+async function escribirSesion(id, data) {
+  await Session.findOneAndUpdate(
+    { id },
+    { value: serializarBuffer(data) },
+    { upsert: true }
+  )
+}
+
+async function leerSesion(id) {
+  try {
+    const doc = await Session.findOne({ id })
+    if (!doc?.value) return null
+    return deserializarBuffer(doc.value)
+  } catch { return null }
+}
+
+async function borrarSesion(id) {
+  await Session.deleteOne({ id })
+}
+
+async function useMongoAuthState() {
+  const creds = (await leerSesion('creds')) || initAuthCreds()
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const result = {}
+          await Promise.all(ids.map(async (id) => {
+            result[id] = await leerSesion(`${type}--${id}`)
+          }))
+          return result
+        },
+        set: async (data) => {
+          const tareas = []
+          for (const tipo in data) {
+            for (const id in data[tipo]) {
+              const valor = data[tipo][id]
+              tareas.push(valor
+                ? escribirSesion(`${tipo}--${id}`, valor)
+                : borrarSesion(`${tipo}--${id}`)
+              )
+            }
+          }
+          await Promise.all(tareas)
+        }
+      }
+    },
+    saveCreds: () => escribirSesion('creds', creds)
+  }
+}
+// ──────────────────────────────────────────────────
+
+// Servidor HTTP
 const server = http.createServer((req, res) => {
-  if (req.url === '/code' || req.url === '/codigo') {
+  if (req.url === '/qr' || req.url === '/code') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    const html = `<!DOCTYPE html>
+    res.end(`<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bot Zyon - Código</title>
-  <meta http-equiv="refresh" content="10">
+  <title>Bot Zyon - QR</title>
+  <meta http-equiv="refresh" content="8">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; background: #1a1a2e; color: white; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .box { background: #16213e; border-radius: 16px; padding: 40px; text-align: center; max-width: 400px; width: 90%; }
-    h1 { color: #25D366; margin-bottom: 8px; }
-    .estado { font-size: 14px; color: #aaa; margin-bottom: 24px; }
-    .code { font-size: 42px; font-weight: bold; letter-spacing: 8px; color: #25D366; background: #0f3460; padding: 20px 30px; border-radius: 12px; margin: 20px 0; font-family: monospace; }
-    .instruccion { font-size: 14px; color: #ccc; line-height: 1.6; }
-    .reload { margin-top: 20px; font-size: 12px; color: #666; }
-    .conectado { color: #25D366; font-size: 24px; }
+    .box { background: #16213e; border-radius: 16px; padding: 40px 30px; text-align: center; max-width: 420px; width: 95%; }
+    h1 { color: #25D366; margin-bottom: 6px; }
+    .estado { font-size: 13px; color: #aaa; margin-bottom: 20px; }
+    #qrbox { background: white; border-radius: 12px; padding: 16px; display: inline-block; margin: 16px auto; }
+    .instruccion { font-size: 13px; color: #ccc; line-height: 1.8; margin-top: 16px; }
+    .conectado { color: #25D366; font-size: 24px; margin: 20px 0; }
+    .esperando { color: #aaa; font-size: 15px; margin: 20px 0; }
+    .refresh { margin-top: 16px; font-size: 11px; color: #555; }
   </style>
 </head>
 <body>
-  <div class="box">
-    <h1>🤖 Bot Zyon</h1>
-    <div class="estado">Estado: <b>${estadoConexion}</b></div>
-    ${estadoConexion === 'conectado' 
-      ? '<div class="conectado">✅ ¡Bot conectado a WhatsApp!</div>'
-      : codigoActual 
-        ? `<div class="code">${codigoActual}</div>
-           <div class="instruccion">
-             📱 Abre WhatsApp<br>
-             → Ajustes → Dispositivos vinculados<br>
-             → Vincular con número de teléfono<br>
-             → Ingresa el código de arriba<br><br>
-             ⏱️ El código expira en ~60 segundos
-           </div>`
-        : '<div class="instruccion">⏳ Generando código, espera unos segundos...</div>'
-    }
-    <div class="reload">Esta página se actualiza automáticamente cada 10s</div>
-  </div>
+<div class="box">
+  <h1>🤖 Bot Zyon</h1>
+  <div class="estado">Estado: <b>${estadoConexion}</b></div>
+  ${estadoConexion === 'conectado'
+    ? '<div class="conectado">✅ ¡Bot conectado!</div><p style="color:#aaa">Sesión guardada en MongoDB 🔒</p>'
+    : qrActual
+      ? `<div id="qrbox"></div>
+         <div class="instruccion">
+           📱 Abre <b>WhatsApp Business</b><br>
+           → Ajustes → Dispositivos vinculados<br>
+           → Vincular un dispositivo<br>
+           → Escanea este código QR
+         </div>
+         <script>
+           new QRCode(document.getElementById("qrbox"), {
+             text: ${JSON.stringify(qrActual)},
+             width: 220, height: 220
+           });
+         </script>`
+      : '<div class="esperando">⏳ Generando QR, espera unos segundos...</div>'
+  }
+  <div class="refresh">Página se actualiza cada 8 segundos</div>
+</div>
 </body>
-</html>`
-    res.end(html)
+</html>`)
   } else {
     res.writeHead(200)
-    res.end('Bot Zyon activo ✅ — Ve a /code para ver el código de vinculación')
+    res.end('Bot Zyon activo ✅')
   }
 })
 
 server.listen(process.env.PORT || 3000, () => {
   console.log('✅ Servidor HTTP activo')
-  console.log('🌐 Visita /code en tu URL de Render para ver el código de vinculación')
 })
-
-function limpiarSesion() {
-  try {
-    if (fs.existsSync('./auth_info')) {
-      fs.rmSync('./auth_info', { recursive: true, force: true })
-      console.log('🗑️ Sesión eliminada')
-    }
-  } catch (e) {
-    console.error('Error eliminando sesión:', e.message)
-  }
-}
 
 async function configurarBot() {
   const grupo = await Grupo.findOne({ id: 'config' })
@@ -102,10 +165,10 @@ async function configurarBot() {
 
 async function startBot() {
   estadoConexion = 'iniciando'
-  codigoActual = null
-
+  qrActual = null
   await connectDB()
-  const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
+
+  const { state, saveCreds } = await useMongoAuthState()
   const { version } = await fetchLatestBaileysVersion()
 
   sock = makeWASocket({
@@ -118,46 +181,28 @@ async function startBot() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  if (!sock.authState.creds.registered && !pairingCodeSolicitado) {
-    pairingCodeSolicitado = true
-    estadoConexion = 'esperando código'
-    await new Promise(r => setTimeout(r, 3000))
-    console.log('📞 Número:', OWNER_RAW)
-    try {
-      const code = await sock.requestPairingCode(OWNER_RAW)
-      codigoActual = code?.replace(/(.{4})(?=.)/g, '$1-') || code
-      estadoConexion = 'esperando vinculación'
-      console.log('\n============================')
-      console.log(`🔑 CODIGO: ${codigoActual}`)
-      console.log('============================')
-      console.log(`🌐 También visible en: https://bot-zyon.onrender.com/code\n`)
-    } catch (err) {
-      console.error('❌ Error al pedir código:', err.message)
-      pairingCodeSolicitado = false
-      codigoActual = null
-      limpiarSesion()
-      setTimeout(startBot, 5000)
-      return
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    if (qr) {
+      qrActual = qr
+      estadoConexion = 'esperando escaneo QR'
+      console.log('\n📱 ESCANEA EL QR EN: https://bot-zyon.onrender.com/qr')
+      qrcode.generate(qr, { small: true })
     }
-  }
-
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode
-      estadoConexion = 'desconectado'
-      codigoActual = null
+      estadoConexion = 'reconectando'
+      qrActual = null
       console.log('🔴 Desconectado, código:', statusCode)
-      if (statusCode === DisconnectReason.loggedOut || statusCode === 401 || statusCode === 403) {
-        limpiarSesion()
+      if (statusCode === DisconnectReason.loggedOut) {
+        console.log('🚪 Sesión cerrada. Limpiando sesión en MongoDB...')
+        await Session.deleteMany({})
       }
-      pairingCodeSolicitado = false
       setTimeout(startBot, 3000)
     }
     if (connection === 'open') {
       estadoConexion = 'conectado'
-      codigoActual = null
-      pairingCodeSolicitado = false
-      console.log('✅ ¡Zyon conectado a WhatsApp!')
+      qrActual = null
+      console.log('✅ ¡Zyon conectado! Sesión guardada en MongoDB 🔒')
       await configurarBot()
     }
   })
@@ -165,7 +210,8 @@ async function startBot() {
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0]
     if (!msg.message) return
-    if (msg.key.fromMe) return
+    if (msg.key.fromMe && msg.key.remoteJid !== OWNER) return
+
     const from = msg.key.remoteJid
     const texto = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
 
